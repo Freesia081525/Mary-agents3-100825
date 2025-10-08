@@ -56,6 +56,14 @@ st.markdown("""
             border-radius: 10px;
             margin-top: 10px;
         }
+        /* Style for the markdown preview box */
+        .markdown-preview {
+            background-color: #1f1f1f;
+            border: 1px solid #444;
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 10px;
+        }
     </style>
 """, unsafe_allow_html=True)
 
@@ -111,12 +119,8 @@ def get_gemini_model():
     """Returns a cached instance of the Gemini model."""
     return genai.GenerativeModel("gemini-2.0-flash")
 
-# BUG FIX: Upgraded function to return a (success, content) tuple for robust error handling.
 def execute_gemini_agent(prompt, data_context, temp, max_tok):
-    """
-    Executes a Gemini agent and returns a tuple (success, content).
-    On failure, success is False and content is the error message.
-    """
+    """Executes a Gemini agent and returns a tuple (success, content)."""
     if not st.session_state.get('GEMINI_API_KEY'):
         return False, "Error: Gemini API key is not configured."
     try:
@@ -124,8 +128,7 @@ def execute_gemini_agent(prompt, data_context, temp, max_tok):
         generation_config = genai.GenerationConfig(temperature=temp, max_output_tokens=max_tok)
         full_prompt = f"CONTEXT:\n{data_context}\n\n---\n\nTASK:\n{prompt}"
         response = model.generate_content(full_prompt, generation_config=generation_config)
-        
-        if not response.text:
+        if not response.parts:
              return False, "API returned an empty response. The model may have generated no content or been blocked. Check safety settings in your Google AI Studio."
         return True, response.text
     except Exception as e:
@@ -133,7 +136,6 @@ def execute_gemini_agent(prompt, data_context, temp, max_tok):
 
 def parse_and_prepare_data(files, text):
     """Reads uploaded files or pasted text and returns content as a string."""
-    # ... (No changes to this function)
     content = ""
     if files:
         for file in files:
@@ -173,56 +175,47 @@ uploaded_files = st.file_uploader(
 pasted_text = st.text_area("📋 Or Paste Raw Data Here:", height=200, placeholder="Paste your raw data here...")
 
 if st.button("1. Process and Summarize Data", type="primary"):
-    # BUG FIX: Selectively clear downstream results, not the entire state.
     keys_to_clear = ['step_1_markdown', 'step_1_markdown_edited', 'step_2_summary_html', 'final_result', 'multi_agent_steps', 'follow_up_questions']
     for key in keys_to_clear:
         if key in st.session_state.workflow_data:
             del st.session_state.workflow_data[key]
         if key in st.session_state:
-             if key in st.session_state:
-                 del st.session_state[key]
-
+            del st.session_state[key]
 
     raw_data = parse_and_prepare_data(uploaded_files, pasted_text)
     if raw_data:
-        # Step 1: Transform Data
         with st.spinner("Agent 1: Transforming data into Markdown..."):
-            transformer_agent = agents.get('Data Transformer', {})
             success, markdown_tables = execute_gemini_agent(
-                transformer_agent.get('default_prompt', ''),
+                agents.get('Data Transformer', {}).get('default_prompt', ''),
                 raw_data,
-                transformer_agent.get('temperature', 0.1),
-                transformer_agent.get('max_tokens', 4096)
+                agents.get('Data Transformer', {}).get('temperature', 0.1),
+                agents.get('Data Transformer', {}).get('max_tokens', 4096)
             )
         
         if success:
             st.session_state.workflow_data['step_1_markdown'] = markdown_tables
-            
-            # Step 2: Summarize Data
             with st.spinner("Agent 2: Generating comprehensive summary..."):
-                summarizer_agent = agents.get('Data Summarizer', {})
-                success, summary_and_keywords = execute_gemini_agent(
-                    summarizer_agent.get('default_prompt', ''),
+                success_summary, summary_and_keywords = execute_gemini_agent(
+                    agents.get('Data Summarizer', {}).get('default_prompt', ''),
                     markdown_tables,
-                    summarizer_agent.get('temperature', 0.4),
-                    summarizer_agent.get('max_tokens', 2048)
+                    agents.get('Data Summarizer', {}).get('temperature', 0.4),
+                    agents.get('Data Summarizer', {}).get('max_tokens', 2048)
                 )
 
-            if success:
-                # BUG FIX: Robust keyword parsing
-                summary = summary_and_keywords
-                keywords = []
+            if success_summary:
+                summary, keywords = summary_and_keywords, []
                 if "keywords:" in summary_and_keywords.lower():
                     parts = summary_and_keywords.lower().split("keywords:")
-                    summary = parts[0].strip()
-                    keywords_str = parts[1].strip() if len(parts) > 1 else ""
+                    summary = summary_and_keywords[:len(parts[0])] # Preserve original case
+                    keywords_str = parts[1].strip()
                     keywords = [k.strip() for k in keywords_str.split(',') if k.strip()]
                 else:
                     st.warning("Could not automatically extract keywords from the summary.")
 
                 summary_html = summary
                 for keyword in keywords:
-                    summary_html = summary_html.replace(keyword, f'<span class="keyword">{keyword}</span>')
+                    if keyword in summary_html: # Simple check to avoid errors
+                        summary_html = summary_html.replace(keyword, f'<span class="keyword">{keyword}</span>')
                 
                 st.session_state.workflow_data['step_2_summary_html'] = summary_html
             else:
@@ -232,31 +225,41 @@ if st.button("1. Process and Summarize Data", type="primary"):
     else:
         st.warning("Please upload or paste data to process.")
     
-    # BUG FIX: Force a rerun to ensure the UI updates with the new state.
     st.rerun()
 
 # --- Data Display and Modification ---
 if 'step_1_markdown' in st.session_state.workflow_data:
     st.header("Step 2: Review and Modify Data")
-    st.subheader("📝 Editable Markdown Tables")
+    
+    # --- START OF THE FIX ---
+    st.subheader("📝 Edit Markdown Source")
+    # The text area allows the user to edit the raw markdown
     st.session_state.workflow_data['step_1_markdown_edited'] = st.text_area(
-        "You can modify the Markdown tables below before the next step.",
-        value=st.session_state.workflow_data['step_1_markdown'],
-        height=300
+        "You can modify the Markdown tables below. The preview will update live.",
+        value=st.session_state.workflow_data.get('step_1_markdown', ''),
+        height=250,
+        label_visibility="collapsed"
     )
+    
+    st.subheader("📊 Live Preview of Markdown Table")
+    # The markdown element renders the content from the text area above
+    st.markdown(
+        f"<div class='markdown-preview'>{st.session_state.workflow_data.get('step_1_markdown_edited', 'No data to display.')}</div>", 
+        unsafe_allow_html=True
+    )
+    # --- END OF THE FIX ---
 
     if 'step_2_summary_html' in st.session_state.workflow_data:
         st.subheader("📊 Comprehensive Summary")
         st.markdown(f"<div class='results-box'>{st.session_state.workflow_data['step_2_summary_html']}</div>", unsafe_allow_html=True)
 
-# ... The rest of the script remains the same as it was already robust ...
 # -------------------- AGENT EXECUTION WORKFLOW --------------------
+# (No changes below this line, the rest of the logic is sound)
 if 'step_1_markdown_edited' in st.session_state.workflow_data:
     st.header("Step 3: Configure and Execute Agent Workflow")
     workflow_type = st.radio("Select Workflow Type:", ["Single Agent", "Multi-Agent Sequence"], horizontal=True)
     agent_names = [name for name in agents.keys() if name not in ['Data Transformer', 'Data Summarizer']]
     
-    # ... (No changes needed in the Single Agent and Multi-Agent UI logic) ...
     if workflow_type == "Single Agent":
         selected_agent = st.selectbox("Select Agent:", agent_names)
         if selected_agent:
