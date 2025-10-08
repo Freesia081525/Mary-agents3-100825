@@ -362,3 +362,71 @@ agents:
   insight_recommender:
     description: "Identifies the most impactful insights and visualization types for given datasets."
     default_prompt: "Recommend top insights, supporting visuals, and possible interpretations across datasets."
+  Data Transformer:
+    description: "Transforms raw data (CSV, JSON, TXT) into clean, readable Markdown tables with proper formatting."
+    default_prompt: |
+      Transform the following data into a clean, well-formatted Markdown table. 
+      
+      Instructions:
+      - Infer column headers if they are missing
+      - Align columns properly
+      - Handle missing values gracefully
+      - Ensure the table is readable and professional
+      
+      Output only the Markdown table without any additional commentary.
+    temperature: 0.1
+    max_tokens: 4096
+
+  Data Summarizer:
+    description: "Analyzes data and generates comprehensive summaries with keyword extraction."
+    default_prompt: |
+      Analyze the provided data and generate a comprehensive summary that includes:
+      
+      1. Overview of the dataset
+      2. Key statistics and observations
+      3. Notable patterns or trends
+      4. Any anomalies or outliers
+      
+      After your summary, on a new line, write "Keywords:" followed by a comma-separated list 
+      of the 5-7 most important keywords that capture the essence of the data.
+    temperature: 0.4
+    max_tokens: 2048
+
+  Insight Extractor:
+    description: "Identifies and extracts key insights, patterns, and actionable intelligence from data."
+    default_prompt: |
+      From the provided data, perform a deep analysis and extract:
+      
+      1. **Key Insights**: The most significant findings
+      2. **Patterns & Trends**: Recurring themes or tendencies
+      3. **Anomalies**: Unexpected or outlier observations
+      4. **Correlations**: Relationships between different data points
+      5. **Actionable Intelligence**: What decisions or actions these insights suggest
+      
+      Present your findings in a clear, structured format.
+    temperature: 0.5
+    max_tokens: 4096
+
+  Pattern Analyzer:
+    description: "Identifies statistical patterns, correlations, and predictive insights."
+    default_prompt: |
+      Analyze the data for patterns and statistical relationships:
+      
+      1. Identify recurring patterns or cycles
+      2. Find correlations between variables
+      3. Detect trends over time (if applicable)
+      4. Highlight any predictive indicators
+      5. Suggest what these patterns might indicate for the future
+      
+      Use statistical reasoning where appropriate.
+    temperature: 0.5
+    max_tokens: 3072
+
+  Risk Assessor:
+    description: "Evaluates potential risks, challenges, and areas of concern in the data."
+    default_prompt: |
+      Perform a risk assessment based on the provided data:
+      
+      1. **High Risk Areas**: Critical concerns that need immediate attention
+      2. **Medium Risk Areas**: Issues that should be monitored
+      3. **Potential Challenges**: Future obstacles or complications
