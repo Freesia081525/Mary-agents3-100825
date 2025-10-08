@@ -63,37 +63,41 @@ st.markdown("""
 
 @st.cache_data
 def load_agents_config():
-    """Load agents configuration from agents.yaml"""
+    """Load agents configuration from agents.yaml using a robust path."""
     try:
-        config_path = Path("agents.yaml")
+        # This creates an absolute path to the YAML file relative to the script's location.
+        # This is crucial for deployment on platforms like Hugging Face Spaces.
+        config_path = Path(__file__).parent / "agents.yaml"
         if config_path.exists():
             with open(config_path, 'r') as f:
                 return yaml.safe_load(f)
         st.warning("agents.yaml not found. Using default agents.")
-        return {
-            'agents': {
-                'Data Transformer': {'description': 'Transforms raw data (CSV, JSON) into Markdown tables.', 'default_prompt': 'Transform the following data into a clean Markdown table. Infer the headers if they are missing.', 'temperature': 0.1, 'max_tokens': 4096},
-                'Data Summarizer': {'description': 'Summarizes data and extracts keywords.', 'default_prompt': 'Analyze the provided data and generate a comprehensive summary. After the summary, list the top 5-7 most important keywords, separated by commas.', 'temperature': 0.4, 'max_tokens': 2048},
-                'Insight Extractor': {'description': 'Extracts key insights and patterns from data.', 'default_prompt': 'From the provided data, identify and extract the most significant insights, trends, or anomalies.', 'temperature': 0.5, 'max_tokens': 4096},
-                'Follow-up Question Generator': {'description': 'Generates relevant follow-up questions.', 'default_prompt': 'Based on the final analysis, generate 3-5 insightful follow-up questions that could guide further investigation.', 'temperature': 0.6, 'max_tokens': 2048}
-            }
-        }
     except Exception as e:
         st.error(f"Error loading agents.yaml: {e}")
-        return {'agents': {}}
 
-# Initialize Gemini API
+    # Fallback default configuration
+    return {
+        'agents': {
+            'Data Transformer': {'description': 'Transforms raw data (CSV, JSON) into Markdown tables.', 'default_prompt': 'Transform the following data into a clean Markdown table. Infer the headers if they are missing.', 'temperature': 0.1, 'max_tokens': 4096},
+            'Data Summarizer': {'description': 'Summarizes data and extracts keywords.', 'default_prompt': 'Analyze the provided data and generate a comprehensive summary. After the summary, list the top 5-7 most important keywords, separated by commas.', 'temperature': 0.4, 'max_tokens': 2048},
+            'Insight Extractor': {'description': 'Extracts key insights and patterns from data.', 'default_prompt': 'From the provided data, identify and extract the most significant insights, trends, or anomalies.', 'temperature': 0.5, 'max_tokens': 4096},
+            'Follow-up Question Generator': {'description': 'Generates relevant follow-up questions.', 'default_prompt': 'Based on the final analysis, generate 3-5 insightful follow-up questions that could guide further investigation.', 'temperature': 0.6, 'max_tokens': 2048}
+        }
+    }
+
+# Initialize Gemini API Key. Prioritize Hugging Face secrets (environment variables).
 if 'GEMINI_API_KEY' not in st.session_state:
     st.session_state['GEMINI_API_KEY'] = os.getenv("GEMINI_API_KEY")
 
-if not st.session_state['GEMINI_API_KEY']:
-    with st.sidebar:
-        st.header("API Key Configuration")
-        api_key_input = st.text_input("🔑 Enter your Gemini API Key:", type="password", key="api_key_input")
-        if st.button("Set API Key"):
-            st.session_state['GEMINI_API_KEY'] = api_key_input
-            st.rerun()
+with st.sidebar:
+    st.header("🔑 API Configuration")
+    api_key_input = st.text_input("Enter your Gemini API Key:", type="password", value=st.session_state.get('GEMINI_API_KEY', ''))
+    if st.button("Set API Key"):
+        st.session_state['GEMINI_API_KEY'] = api_key_input
+        st.success("API Key set!")
+        st.rerun()
 
+# Configure the genai library only if the key is available
 if st.session_state.get('GEMINI_API_KEY'):
     try:
         genai.configure(api_key=st.session_state['GEMINI_API_KEY'])
@@ -106,32 +110,42 @@ else:
 
 # -------------------- HELPER FUNCTIONS --------------------
 
+# Cache the generative model instance to avoid re-initialization on each run
+@st.cache_resource
+def get_gemini_model():
+    """Returns a cached instance of the Gemini model."""
+    return genai.GenerativeModel("gemini-2.0-flash")
+
 def execute_gemini_agent(prompt, data_context, temp, max_tok):
     """Generic function to run a Gemini agent."""
     if not st.session_state.get('GEMINI_API_KEY'):
         return "Error: Gemini API key is not configured."
     try:
-        model = genai.GenerativeModel("gemini-2.0-flash", generation_config={"temperature": temp, "max_output_tokens": max_tok})
+        model = get_gemini_model()
+        generation_config = genai.GenerationConfig(temperature=temp, max_output_tokens=max_tok)
         full_prompt = f"{data_context}\n\n---\n\nTask:\n{prompt}"
-        response = model.generate_content(full_prompt)
+        response = model.generate_content(full_prompt, generation_config=generation_config)
         return response.text
     except Exception as e:
         return f"Error during API call: {e}"
 
 def parse_and_prepare_data(files, text):
-    """Reads uploaded files or pasted text and returns content."""
+    """Reads uploaded files or pasted text and returns content as a string."""
     content = ""
     if files:
         for file in files:
             content += f"--- START OF FILE: {file.name} ---\n"
-            if file.type == "text/csv":
-                df = pd.read_csv(file)
-                content += df.to_string() + "\n"
-            elif file.type == "application/json":
-                df = pd.read_json(io.StringIO(file.getvalue().decode("utf-8")))
-                content += df.to_string() + "\n"
-            else:
-                content += file.getvalue().decode("utf-8") + "\n"
+            try:
+                if file.type == "text/csv":
+                    df = pd.read_csv(file)
+                    content += df.to_string() + "\n"
+                elif file.type == "application/json":
+                    df = pd.read_json(io.StringIO(file.getvalue().decode("utf-8")))
+                    content += df.to_string() + "\n"
+                else:
+                    content += file.getvalue().decode("utf-8") + "\n"
+            except Exception as e:
+                st.error(f"Error processing file {file.name}: {e}")
             content += f"--- END OF FILE: {file.name} ---\n\n"
     elif text:
         content = text
@@ -154,9 +168,12 @@ uploaded_files = st.file_uploader(
     type=["csv", "json", "txt"],
     accept_multiple_files=True
 )
-pasted_text = st.text_area("📋 Or Paste Raw Data Here:", height=200)
+pasted_text = st.text_area("📋 Or Paste Raw Data Here:", height=200, placeholder="Paste your raw data here...")
 
 if st.button("1. Process and Summarize Data", type="primary"):
+    # Clear previous run data
+    st.session_state.workflow_data = {}
+    
     raw_data = parse_and_prepare_data(uploaded_files, pasted_text)
     if raw_data:
         with st.spinner("Engines starting... Transforming data into Markdown..."):
@@ -177,18 +194,16 @@ if st.button("1. Process and Summarize Data", type="primary"):
                 summarizer_agent.get('temperature', 0.4),
                 summarizer_agent.get('max_tokens', 2048)
             )
-            # Simple split to separate summary from keywords
             parts = summary_and_keywords.split("Keywords:")
             summary = parts[0].strip()
             keywords_str = parts[1].strip() if len(parts) > 1 else ""
-            keywords = [k.strip() for k in keywords_str.split(',')]
+            keywords = [k.strip() for k in keywords_str.split(',') if k.strip()]
 
-            # Highlight keywords in summary
+            summary_html = summary
             for keyword in keywords:
-                if keyword:
-                    summary = summary.replace(keyword, f'<span class="keyword">{keyword}</span>')
-
-            st.session_state.workflow_data['step_2_summary'] = summary
+                summary_html = summary_html.replace(keyword, f'<span class="keyword">{keyword}</span>')
+            
+            st.session_state.workflow_data['step_2_summary_html'] = summary_html
     else:
         st.warning("Please upload or paste data to process.")
 
@@ -202,8 +217,9 @@ if 'step_1_markdown' in st.session_state:
         height=300
     )
 
-    st.subheader("📊 Comprehensive Summary")
-    st.markdown(f"<div class='results-box'>{st.session_state.workflow_data['step_2_summary']}</div>", unsafe_allow_html=True)
+    if 'step_2_summary_html' in st.session_state:
+        st.subheader("📊 Comprehensive Summary")
+        st.markdown(f"<div class='results-box'>{st.session_state.workflow_data['step_2_summary_html']}</div>", unsafe_allow_html=True)
 
 
 # -------------------- AGENT EXECUTION WORKFLOW --------------------
@@ -211,74 +227,69 @@ if 'step_1_markdown_edited' in st.session_state:
     st.header("Step 3: Configure and Execute Agent Workflow")
 
     workflow_type = st.radio("Select Workflow Type:", ["Single Agent", "Multi-Agent Sequence"], horizontal=True)
-
-    agent_names = list(agents.keys())
-    # Exclude helper agents from direct selection if desired
-    agent_names = [name for name in agent_names if name not in ['Data Transformer', 'Data Summarizer']]
+    
+    # Filter out internal agents from user selection
+    agent_names = [name for name in agents.keys() if name not in ['Data Transformer', 'Data Summarizer']]
 
     if workflow_type == "Single Agent":
         selected_agent = st.selectbox("Select Agent:", agent_names)
-        agent_config = agents.get(selected_agent, {})
+        if selected_agent:
+            agent_config = agents.get(selected_agent, {})
+            with st.expander(f"Configure '{selected_agent}'", expanded=True):
+                prompt = st.text_area("Prompt:", value=agent_config.get('default_prompt', ''), height=100, key=f"single_prompt")
+                temp = st.slider("Temperature:", 0.0, 1.0, float(agent_config.get('temperature', 0.5)), 0.05, key=f"single_temp")
+                max_tok = st.number_input("Max Tokens:", 512, 8192, int(agent_config.get('max_tokens', 4096)), key=f"single_tokens")
 
-        with st.expander(f"Configure '{selected_agent}'", expanded=True):
-            prompt = st.text_area("Prompt:", value=agent_config.get('default_prompt', ''), height=100, key=f"single_prompt")
-            temp = st.slider("Temperature:", 0.0, 1.0, float(agent_config.get('temperature', 0.5)), 0.05, key=f"single_temp")
-            max_tok = st.number_input("Max Tokens:", 512, 8192, int(agent_config.get('max_tokens', 4096)), key=f"single_tokens")
-
-        if st.button(f"🚀 Execute {selected_agent}"):
-            with st.spinner(f"Executing {selected_agent}..."):
-                initial_data = st.session_state.workflow_data['step_1_markdown_edited']
-                result = execute_gemini_agent(prompt, initial_data, temp, max_tok)
-                st.session_state.workflow_data['final_result'] = result
+            if st.button(f"🚀 Execute {selected_agent}"):
+                with st.spinner(f"Executing {selected_agent}..."):
+                    initial_data = st.session_state.workflow_data['step_1_markdown_edited']
+                    result = execute_gemini_agent(prompt, initial_data, temp, max_tok)
+                    st.session_state.workflow_data['final_result'] = result
 
     else: # Multi-Agent Sequence
         selected_agents = st.multiselect("Select agents in execution order:", agent_names)
 
         st.session_state.multi_agent_configs = {}
         for agent_name in selected_agents:
-            st.subheader(f"Configure Agent: {agent_name}")
             agent_config = agents.get(agent_name, {})
-            with st.expander(f"Settings for '{agent_name}'", expanded=True):
+            with st.expander(f"Configure Agent: {agent_name}", expanded=True):
                 prompt = st.text_area("Prompt:", value=agent_config.get('default_prompt', ''), height=100, key=f"multi_prompt_{agent_name}")
                 temp = st.slider("Temperature:", 0.0, 1.0, float(agent_config.get('temperature', 0.5)), 0.05, key=f"multi_temp_{agent_name}")
                 max_tok = st.number_input("Max Tokens:", 512, 8192, int(agent_config.get('max_tokens', 4096)), key=f"multi_tokens_{agent_name}")
                 st.session_state.multi_agent_configs[agent_name] = {'prompt': prompt, 'temp': temp, 'max_tok': max_tok}
 
         if st.button("🚀 Execute Multi-Agent Workflow"):
-            st.session_state.workflow_data.pop('final_result', None) # Clear previous final result
-            st.session_state.workflow_data.pop('multi_agent_steps', None) # Clear previous steps
+            st.session_state.workflow_data.pop('final_result', None)
+            st.session_state.workflow_data.pop('multi_agent_steps', None)
             
-            with st.spinner("Executing multi-agent workflow..."):
-                current_data = st.session_state.workflow_data['step_1_markdown_edited']
-                st.session_state.multi_agent_steps = []
-
-                for i, agent_name in enumerate(selected_agents):
-                    st.info(f"Running Step {i+1}: {agent_name}...")
-                    config = st.session_state.multi_agent_configs[agent_name]
-                    result = execute_gemini_agent(config['prompt'], current_data, config['temp'], config['max_tok'])
-                    st.session_state.multi_agent_steps.append({'agent': agent_name, 'output': result})
-                    current_data = result # Output of one agent becomes input for the next
-
-                st.session_state.workflow_data['final_result'] = current_data
-            st.success("Multi-agent workflow completed!")
+            if selected_agents:
+                with st.spinner("Executing multi-agent workflow..."):
+                    current_data = st.session_state.workflow_data['step_1_markdown_edited']
+                    st.session_state.multi_agent_steps = []
+                    for i, agent_name in enumerate(selected_agents):
+                        st.info(f"Running Step {i+1}: {agent_name}...")
+                        config = st.session_state.multi_agent_configs[agent_name]
+                        result = execute_gemini_agent(config['prompt'], current_data, config['temp'], config['max_tok'])
+                        st.session_state.multi_agent_steps.append({'agent': agent_name, 'output': result})
+                        current_data = result
+                    st.session_state.workflow_data['final_result'] = current_data
+                st.success("Multi-agent workflow completed!")
+            else:
+                st.warning("Please select at least one agent for the multi-agent workflow.")
 
 # --- Display Multi-Agent Intermediate and Final Results ---
 if 'multi_agent_steps' in st.session_state:
     st.header("Step 4: Review Workflow Results")
+    current_input_for_next_step = ""
     for i, step in enumerate(st.session_state.multi_agent_steps):
         st.subheader(f"Output from Step {i+1}: {step['agent']}")
-        
-        # Allow editing of each step's output
-        edited_output = st.text_area(f"Modify output from {step['agent']}:", value=step['output'], height=250, key=f"edited_step_{i}")
+        edited_output = st.text_area("", value=step['output'], height=250, key=f"edited_step_{i}", label_visibility="collapsed")
         st.session_state.multi_agent_steps[i]['output_edited'] = edited_output
+        current_input_for_next_step = edited_output # The last edited output is the final result
 
-    if st.button("Regenerate Final Output from Modified Steps"):
-         with st.spinner("Rerunning final steps..."):
-            # This logic demonstrates how to chain edited outputs.
-            # For simplicity, this example just uses the last edited output as the final one.
-            # A more complex app could re-run subsequent agents.
-            st.session_state.workflow_data['final_result'] = st.session_state.multi_agent_steps[-1]['output_edited']
-
+    if st.button("Update Final Result from Modified Steps"):
+        st.session_state.workflow_data['final_result'] = current_input_for_next_step
+        st.success("Final result updated!")
 
 # --- Final Result and Follow-up ---
 if 'final_result' in st.session_state:
@@ -302,12 +313,11 @@ if 'follow_up_questions' in st.session_state:
     st.header("❓ Suggested Follow-up Questions")
     st.markdown(f"<div class='results-box'>{st.session_state.follow_up_questions}</div>", unsafe_allow_html=True)
 
-
 # -------------------- FOOTER & SAMPLE YAML --------------------
 st.markdown("---")
 st.write("Built with **Streamlit + Gemini API** | Multi-Agent System with YAML Configuration")
 
-with st.expander("📋 Sample agents.yaml Configuration"):
+with st.expander("📋 View Sample agents.yaml Configuration"):
     st.code("""
 agents:
   Data Transformer:
