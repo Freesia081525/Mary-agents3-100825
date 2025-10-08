@@ -109,7 +109,7 @@ else:
 @st.cache_resource
 def get_gemini_model():
     """Returns a cached instance of the Gemini model."""
-    return genai.GenerativeModel("gemini-1.5-flash")
+    return genai.GenerativeModel("gemini-2.0-flash")
 
 # BUG FIX: Upgraded function to return a (success, content) tuple for robust error handling.
 def execute_gemini_agent(prompt, data_context, temp, max_tok):
