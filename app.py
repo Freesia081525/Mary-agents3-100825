@@ -246,7 +246,7 @@ def load_agents_config():
 @st.cache_resource
 def get_gemini_model():
     """Returns a cached instance of the Gemini model."""
-    return genai.GenerativeModel("gemini-2.0-flash-exp")
+    return genai.GenerativeModel("gemini-2.5-flash")
 
 def execute_gemini_agent(prompt, data_context, temp, max_tok):
     """Executes a Gemini agent and returns (success, content)."""
